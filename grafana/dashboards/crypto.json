@@ -1,0 +1,141 @@
+{
+  "uid": "crypto-anomaly",
+  "title": "Crypto Anomaly Detection — BTCUSDT",
+  "tags": ["crypto", "anomaly"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Pumps",
+        "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+        "enable": true,
+        "iconColor": "green",
+        "target": {
+          "rawQuery": true,
+          "rawSql": "SELECT detected_at AS time, detector || ' (z=' || ROUND(score::numeric,2) || ')' AS text, direction AS tags FROM anomalies WHERE symbol='BTCUSDT' AND direction='pump' AND $__timeFilter(detected_at)",
+          "format": "table"
+        }
+      },
+      {
+        "name": "Dumps",
+        "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+        "enable": true,
+        "iconColor": "red",
+        "target": {
+          "rawQuery": true,
+          "rawSql": "SELECT detected_at AS time, detector || ' (z=' || ROUND(score::numeric,2) || ')' AS text, direction AS tags FROM anomalies WHERE symbol='BTCUSDT' AND direction='dump' AND $__timeFilter(detected_at)",
+          "format": "table"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "BTCUSDT — Price (close & VWAP)",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, close, vwap FROM ohlcv_1s WHERE symbol='BTCUSDT' AND $__timeFilter(bucket) ORDER BY bucket",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Volume — buy vs sell (BTC)",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+      "gridPos": {"x": 0, "y": 10, "w": 24, "h": 8},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 100,
+            "stacking": {"mode": "normal", "group": "A"}
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "buy_volume"},  "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "sell_volume"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
+        ]
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, buy_volume, sell_volume FROM ohlcv_1s WHERE symbol='BTCUSDT' AND $__timeFilter(bucket) ORDER BY bucket",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Recent anomalies",
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+      "gridPos": {"x": 0, "y": 18, "w": 24, "h": 10},
+      "options": {"showHeader": true},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "direction"},
+            "properties": [
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}},
+              {"id": "mappings", "value": [
+                {"type": "value", "options": {"pump":    {"color": "green", "index": 0}}},
+                {"type": "value", "options": {"dump":    {"color": "red",   "index": 1}}},
+                {"type": "value", "options": {"unknown": {"color": "blue",  "index": 2}}}
+              ]}
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "crypto-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT detected_at AS \"time\", detector, direction, ROUND(score::numeric, 3) AS score, (features->>'close')::numeric AS close, ROUND((features->>'volume_spike_ratio')::numeric, 2) AS vol_spike, ROUND((features->>'aggressor_ratio')::numeric, 3) AS agg_ratio, ROUND((features->>'return_zscore')::numeric, 2) AS return_z FROM anomalies WHERE symbol='BTCUSDT' AND $__timeFilter(detected_at) ORDER BY detected_at DESC LIMIT 100",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

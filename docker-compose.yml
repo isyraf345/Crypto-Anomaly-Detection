@@ -1,0 +1,125 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "cub zk-ready localhost:2181 5"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 4
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cryptopass}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crypto}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  producer:
+    build: ./producer
+    container_name: producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SYMBOL: btcusdt
+      KAFKA_BOOTSTRAP: kafka:9092
+    restart: unless-stopped
+
+  aggregator:
+    build: ./aggregator
+    container_name: aggregator
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      SYMBOL: btcusdt
+      KAFKA_BOOTSTRAP: kafka:9092
+      PG_DSN: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-cryptopass}@postgres:5432/${POSTGRES_DB:-crypto}
+    restart: unless-stopped
+
+  detector:
+    build: ./detector
+    container_name: detector
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SYMBOL: btcusdt
+      PG_DSN: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-cryptopass}@postgres:5432/${POSTGRES_DB:-crypto}
+    restart: unless-stopped
+
+  if_detector:
+    build: ./if_detector
+    container_name: if_detector
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SYMBOL: btcusdt
+      PG_DSN: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-cryptopass}@postgres:5432/${POSTGRES_DB:-crypto}
+      MIN_TRAINING_BARS: "1200"
+      TRAIN_HOURS: "6"
+      RETRAIN_INTERVAL_SEC: "1800"
+      CONTAMINATION: "0.01"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  grafana_data:

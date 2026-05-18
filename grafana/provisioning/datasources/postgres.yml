@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: Crypto-Postgres
+    uid: crypto-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: crypto
+    secureJsonData:
+      password: cryptopass
+    jsonData:
+      database: crypto
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+    isDefault: true
+    editable: true
