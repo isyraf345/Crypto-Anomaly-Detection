@@ -1,106 +1,128 @@
 # Real-Time Crypto Anomaly Detection
 
-A streaming data pipeline that watches live Bitcoin trades on Binance, detects unusual market activity (pumps, dumps, volume spikes) with both rule-based and machine-learning detectors, and visualizes everything in a live Grafana dashboard.
+A streaming data pipeline that watches **live Bitcoin trades on Binance**, detects unusual market activity (pumps, dumps, volume spikes) with both **rule-based and machine-learning** detectors, and visualizes everything in a live **Grafana** dashboard.
 
-Built end-to-end with Kafka, TimescaleDB, scikit-learn, and Docker. Runs entirely on your laptop — no cloud required.
+Built end-to-end with **Apache Kafka, TimescaleDB, scikit-learn, and Docker**. Runs entirely on your laptop — no cloud account required.
 
----
-
-## What it actually does
-
-```
-Binance Exchange  ──►  We connect to their live trade feed (WebSocket)
-       │
-       ▼               Every trade that happens on BTCUSDT (~1-40 per second)
-                       gets pushed to us in real time.
-       │
-       ▼
-   Kafka              Acts as a buffer / log between the data source and
-                      everything that consumes it. Decouples the pipeline.
-       │
-       ├──►  Aggregator    Bundles raw trades into 1-second OHLCV bars
-       │                   (open, high, low, close, volume + buy/sell split)
-       │                   and saves them to Postgres.
-       │
-       ├──►  Rule Detector   Watches each new bar and flags it if:
-       │                     - price moved unusually (z-score > 4)
-       │                     - volume spiked (>10× rolling median)
-       │                     - one-sided aggression (>95% buys or sells)
-       │
-       └──►  ML Detector     Isolation Forest trained on recent history.
-                             Flags bars whose multivariate feature signature
-                             looks unlike "normal" market behavior.
-       │
-       ▼
-   Postgres + TimescaleDB    Stores bars and anomalies for the dashboard.
-       │
-       ▼
-   Grafana                   Live dashboard at http://localhost:3000
-                             - Price chart with anomaly markers
-                             - Buy vs sell volume bars
-                             - Recent anomalies table
-```
+> **Project context:** built as a portfolio / learning project to practice end-to-end streaming data engineering and applied ML.
 
 ---
 
-## Where to learn more
+## Highlights
 
-If you have **zero background** in any of this, read the docs in this order:
+- **Real-time only** — connects to Binance's public WebSocket. Not CSV replay.
+- **End-to-end streaming** — Binance → Kafka → Postgres → Grafana, fully containerized.
+- **Four anomaly detectors** running in parallel: three interpretable rules + one Isolation Forest. They cross-validate each other.
+- **Storage-efficient** — raw trades (7-10 GB/day) stay ephemeral in Kafka; only 1-second aggregated bars and anomaly events persist (~20 MB/day).
+- **One-command bring-up** — `docker compose up -d` and everything works.
+- **Six documentation files** covering crypto terminology, architecture, the math behind every detector, and how to read the dashboard.
 
-| # | Doc | What it covers |
+---
+
+## What it does
+
+```
+Binance Exchange  ──►  Live WebSocket feed of every BTCUSDT trade
+       │
+       ▼
+   Kafka              Decouples producer from all consumers
+       │
+       ├──►  Aggregator     Bundles raw trades into 1-second OHLCV bars
+       │                    (open/high/low/close/volume + buy/sell aggressor split)
+       │
+       ├──►  Rule Detector  Flags bars where:
+       │                    - price moved unusually (|z-score| > 4)
+       │                    - volume spiked (>10× rolling median)
+       │                    - one-sided aggression (>95% buys or sells)
+       │
+       └──►  ML Detector    Isolation Forest, retrained every 30 min on the
+                            rolling last 6 hours. Catches multivariate patterns
+                            the rules can't.
+       │
+       ▼
+   Postgres + TimescaleDB   Hypertable for bars, regular table for anomalies
+       │
+       ▼
+   Grafana                  Live dashboard:
+                            - Price + VWAP chart with anomaly markers
+                            - Stacked buy vs sell volume bars
+                            - Recent anomalies table
+```
+
+---
+
+## Example: a real anomaly cluster the system caught
+
+During development, the detector cluster fired on a real BTCUSDT move:
+
+| Time | Detectors firing | Close | Volume vs median | Aggressor ratio | Return z-score |
+|---|---|---|---|---|---|
+| 18:42:51 | price_zscore + volume_spike + aggressor_imbalance | $78,212 | 164× | 1.000 (all buys) | +7.68 |
+| 18:43:35 | price_zscore + volume_spike + aggressor_imbalance | $78,232 | 132× | 1.000 | +6.24 |
+| 18:43:37 | volume_spike + aggressor_imbalance | $78,245 | 81× | 0.998 | +3.52 |
+| 18:43:38 | volume_spike + aggressor_imbalance | $78,262 | 18× | 1.000 | +3.89 |
+
+All three independent rule detectors agreeing on the same buckets, all labeled `pump`, price climbed $78,212 → $78,262 in ~50 seconds with sustained 100%-buy aggression. The Isolation Forest independently agreed on the same buckets.
+
+---
+
+## Tech stack
+
+| Layer | Tool | Why |
 |---|---|---|
-| 1 | [docs/01-crypto-primer.md](docs/01-crypto-primer.md) | Crypto and market terminology from scratch — what's a trade, what's OHLCV, what's a pump/dump |
-| 2 | [docs/02-architecture.md](docs/02-architecture.md) | The full system, what each component does, what Kafka is and why we use it |
-| 3 | [docs/03-anomaly-detection.md](docs/03-anomaly-detection.md) | The math behind every detector — z-scores, rolling windows, Isolation Forest |
-| 4 | [docs/04-dashboard-guide.md](docs/04-dashboard-guide.md) | How to read each chart, what to look for, examples of real anomalies |
-| 5 | [docs/05-operations.md](docs/05-operations.md) | Day-to-day commands: start/stop, watch logs, query the DB, troubleshoot |
-| 6 | [db/README.md](db/README.md) | Database schema reference — tables, columns, JSONB structures, common queries |
-
----
-
-## Tech stack at a glance
-
-| Layer | Tool | Version | Why |
-|---|---|---|---|
-| Data source | Binance WebSocket API | — | Free, public, real-time |
-| Stream broker | Apache Kafka | 7.5 (Confluent) | Decouples producer from consumers, replayable |
-| Storage | PostgreSQL + TimescaleDB | PG 16 | Time-series superpowers on familiar SQL |
-| Dashboards | Grafana | latest | Best-in-class time-series UI, free |
-| Services | Python | 3.11 | Standard for data + ML work |
-| Kafka client | `confluent-kafka` | 2.x | Fast (librdkafka-based) |
-| DB client | `psycopg` v3 | 3.2+ | Modern Postgres driver |
-| WS client | `websockets` | 12+ | Async-native |
-| ML | `scikit-learn` | 1.5+ | Isolation Forest |
-| Orchestration | Docker Compose | — | One-command bring-up |
+| Data source | Binance WebSocket API | Free, public, real-time |
+| Stream broker | Apache Kafka 7.5 (Confluent) | Decouples pipeline, replayable |
+| Storage | PostgreSQL 16 + TimescaleDB | Hypertables on familiar SQL |
+| Dashboards | Grafana (latest) | Best-in-class time-series UI |
+| Services | Python 3.11 | Standard for data + ML |
+| Kafka client | `confluent-kafka` | Fast (librdkafka-based) |
+| DB driver | `psycopg` v3 | Modern Postgres driver |
+| WebSocket client | `websockets` | Async-native |
+| ML library | `scikit-learn` | Isolation Forest |
+| Orchestration | Docker Compose | One-command bring-up |
 
 ---
 
 ## Quick start
 
-You need **Docker Desktop** running. That's the only prerequisite.
+### Prerequisites
+- **Docker Desktop** (Mac / Windows / Linux) running
+
+### Clone and run
 
 ```bash
-# from the project root
+git clone https://github.com/<your-username>/<your-repo-name>.git
+cd <your-repo-name>
+
+# Copy environment template (defaults are fine for local dev)
+cp .env.example .env
+
+# Bring up everything
 docker compose up -d
 ```
 
-Wait ~30 seconds for everything to settle, then open:
+First boot pulls images and takes a few minutes. Once settled, the producer connects to Binance and data starts flowing within seconds.
 
-- **Grafana dashboard:** http://localhost:3000 (login: `admin` / `admin`)
-- **Postgres:** `localhost:5433`, user `crypto`, password `cryptopass`, db `crypto`
-- **Kafka:** `localhost:29092` (from host) or `kafka:9092` (from inside Docker)
+### Open the dashboard
+- **Grafana:** http://localhost:3000 (login: `admin` / `admin`)
+- Navigate: left sidebar → **Dashboards** → **Crypto Anomaly Detection — BTCUSDT**
 
-To stop everything:
+### Inspect raw data
+- **Postgres:** `localhost:5433` (user `crypto` / pass `cryptopass` / db `crypto`)
+- **Kafka:** `localhost:29092` (host) or `kafka:9092` (in-network)
 
-```bash
-docker compose down
-```
-
-To stop AND delete all stored data:
+### Stop / clean up
 
 ```bash
-docker compose down -v
+docker compose down       # stop, keep data
+docker compose down -v    # stop and wipe data volumes (fresh start)
 ```
+
+> The Isolation Forest detector needs ~20 minutes of data before it begins training. Rule-based detectors start firing almost immediately. Expect quiet for the first few minutes while everything warms up.
+
+---
+
+
 
 ---
 
@@ -108,33 +130,22 @@ docker compose down -v
 
 ```
 .
-├── docker-compose.yml         # All 7 services wired together
-├── .env                       # Default credentials (gitignored)
+├── docker-compose.yml          # All services wired together
+├── .env.example                # Environment template (copy to .env)
+├── .gitignore
+│
 ├── db/
-│   └── init.sql               # Postgres schema (ohlcv_1s, anomalies tables)
-├── producer/                  # Binance WS → Kafka
-├── aggregator/                # Kafka → 1-sec OHLCV bars in Postgres
-├── detector/                  # Rule-based anomaly detector
-├── if_detector/               # Isolation Forest anomaly detector
+│   ├── README.md               # Database schema reference
+│   └── init.sql                # Postgres schema (auto-runs on first start)
+│
+├── producer/                   # Binance WebSocket → Kafka
+├── aggregator/                 # Kafka → 1-second OHLCV bars in Postgres
+├── detector/                   # Rule-based anomaly detector
+├── if_detector/                # Isolation Forest anomaly detector
+│
 ├── grafana/
-│   ├── provisioning/          # Auto-configured datasource + dashboard provider
-│   └── dashboards/            # Dashboard JSON
-└── docs/                      # The explainer docs — start with 01
+│   ├── provisioning/           # Auto-configured datasource + dashboard provider
+│   └── dashboards/             # Dashboard JSON
+│
+└── docs/                       # Explainer documentation (start with 01)
 ```
-
----
-
-## Status
-
-All five planned phases are complete. The system is running live data right now if you have `docker compose up` going.
-
-| Phase | Component | Done |
-|---|---|---|
-| 1 | Infrastructure (Kafka, Postgres, Grafana) | yes |
-| 2 | Binance WS producer | yes |
-| 3 | 1-second OHLCV aggregator | yes |
-| 4 | Rule-based anomaly detector | yes |
-| 5 | Grafana dashboard | yes |
-| 6 | Isolation Forest detector | yes |
-| 7 | Multi-symbol (ETH alongside BTC) | future |
-| 8 | AWS RDS deployment | deferred |
