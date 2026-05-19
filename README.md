@@ -39,4 +39,5 @@ docker compose down -v    # stop and wipe data
 - [04-dashboard-guide.md](docs/04-dashboard-guide.md) — reading the Grafana panels
 - [05-operations.md](docs/05-operations.md) — commands, logs, troubleshooting
 - [06-kafka.md](docs/06-kafka.md) — Kafka config and CLI
+- [07-isolation-forest.md](docs/07-isolation-forest.md) — IF detector internals, training, and tuning
 - [db/README.md](db/README.md) — database schema
